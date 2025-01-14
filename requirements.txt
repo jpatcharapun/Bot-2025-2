@@ -88,7 +88,6 @@ tornado==6.4.2
 tqdm==4.66.4
 typing_extensions==4.12.2
 tzdata==2023.3
-vboxapi==1.0
 watchdog==6.0.0
 webencodings==0.5.1
 Werkzeug==3.0.6
