@@ -12,6 +12,7 @@ from multi_short import get_open_orders , get_wallet_balance , get_market_ticker
 import time
 import psutil
 import plotly.express as px
+
 import pytz
 
 st.set_page_config(page_title="Bot", page_icon="🦈", layout="wide", initial_sidebar_state="expanded", menu_items=None)
@@ -453,9 +454,9 @@ def restart_bot_if_running():
 async def auto_refresh():
     while refresh_auto:
         autorefresh()
-        # await asyncio.sleep(30)  # รอ 60 วินาทีต่อการ Refresh
-        # if st.session_state.bot_status == "Running":
-        #     restart_bot()
+        await asyncio.sleep(300)  # รอ 60 วินาทีต่อการ Refresh
+        if st.session_state.bot_status == "Running":
+            restart_bot()
             
 # เรียกใช้งาน Auto Refresh แบบ Async
 if refresh_auto:

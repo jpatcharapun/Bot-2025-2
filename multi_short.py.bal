@@ -416,155 +416,114 @@ def calculate_overall_profit_loss():
     conn.close()
     return result[0] if result and result[0] is not None else 0.0
 
-def scalping_bot(symbol, budget=100, profit_percent=2, cut_loss_percent=3, trading_fee_percent=0.25 , timetosleep=10 , reloadtime=120):
+def scalping_bot(symbol, budget=100, profit_percent=2, cut_loss_percent=3, trading_fee_percent=0.25, timetosleep=10, reloadtime=120):
     """บอท Scalping พร้อม Take Profit และ Cut Loss"""
     trading_fee_rate = trading_fee_percent / 100  # แปลงค่าธรรมเนียมเป็นอัตราส่วน
 
     # ตรวจสอบยอดคงเหลือ
     wallet = get_wallet_balance()
-    balance = float(wallet.get(symbol.split("_")[0], 0))  # ดึงยอดคงเหลือของเหรียญที่สนใจ
-    # save_log(symbol,f"{symbol}: คงเหลือ {balance}")
-
-    buy_price = None
-    buy_fee = 0
+    balance = float(wallet.get(symbol.split("_")[0], 0))
 
     if balance > 0:
-        save_log(symbol,f"{symbol}: มีอยู่แล้ว รอขาย...")
-        # ดึงข้อมูลราคาซื้อจากคำสั่งซื้อที่ดำเนินการล่าสุด
-        latest_buy = get_latest_buy_order(symbol)
-        if latest_buy:
-            buy_price = latest_buy["buy_price"]
-            buy_fee = latest_buy["fee"] # คำนวณค่าธรรมเนียมการซื้อ
-            # save_log(symbol,f"{symbol}: ราคาซื้อจากคำสั่งล่าสุด: {buy_price:.2f} THB (ค่าธรรมเนียม: {buy_fee:.2f} THB)")
-        else:
-            # save_log(symbol,f"{symbol}: ไม่พบข้อมูลราคาซื้อจากคำสั่งล่าสุด")
-            return
-            # ตรวจสอบว่า buy_price มีค่า
-        if buy_price is None:
-            # save_log(symbol,f"{symbol}: ไม่สามารถกำหนดราคาซื้อได้")
-            return
-
-        # คำนวณเป้าหมาย Take Profit และ Cut Loss
-        target_sell_price = buy_price * (1 + profit_percent / 100) / (1 - trading_fee_rate)
-        cut_loss_price = buy_price * (1 - cut_loss_percent / 100) / (1 - trading_fee_rate)
-        # save_log(symbol,f"{symbol}: เป้าหมายขายกำไร {target_sell_price:.2f} THB (รวมค่าธรรมเนียม)")
-        # save_log(symbol,f"{symbol}: เป้าหมาย Cut Loss {cut_loss_price:.2f} THB (รวมค่าธรรมเนียม)")
+        handle_existing_balance(symbol, balance, profit_percent, cut_loss_percent, trading_fee_rate, timetosleep)
     else:
-        # ยกเลิกคำสั่งค้าง (ถ้ามี)
-        cancel_all_orders(symbol)
+        handle_new_order(symbol, budget, trading_fee_rate, profit_percent, cut_loss_percent, timetosleep)
 
-        # ดึงราคาล่าสุด
-        ticker = get_market_ticker(symbol)
-        if not ticker or "last" not in ticker:
-            save_log(symbol,f"{symbol}: (New) ไม่สามารถดึงราคาล่าสุดได้")
-            return
 
-        current_price = float(ticker.get("last"))
-        save_log(symbol,f"{symbol}: (New) ราคาปัจจุบัน {current_price:.2f} THB")
+async def handle_existing_balance(symbol, balance, profit_percent, cut_loss_percent, trading_fee_rate, timetosleep):
+    """จัดการยอดคงเหลือที่มีอยู่แล้ว"""
+    latest_buy = get_latest_buy_order(symbol)
+    if not latest_buy:
+        save_log(symbol, f"{symbol}: ไม่พบคำสั่งซื้อก่อนหน้า")
+        return
 
-        # คำนวณจำนวนที่ต้องการซื้อ
-        amount_to_buy = budget / current_price
-        buy_fee = amount_to_buy * current_price * trading_fee_rate
-        save_log(symbol,f"{symbol}: (New) กำลังซื้อ {amount_to_buy:.6f} ที่ราคา {current_price:.2f} THB ({budget} + ค่าธรรมเนียม {buy_fee:.2f} THB)")
-        buy_response = place_order(symbol, "buy", budget, current_price)
+    buy_price = latest_buy["buy_price"]
+    target_sell_price = calculate_target_price(buy_price, profit_percent, trading_fee_rate)
+    cut_loss_price = calculate_cut_loss_price(buy_price, cut_loss_percent, trading_fee_rate)
 
-        if buy_response and buy_response.get("error") == 0:
-            buy_price = current_price
-            save_log(symbol,f"{symbol}: (New) ซื้อสำเร็จที่ราคา {buy_price:.2f} THB")
-        else:
-            save_log(symbol,f"{symbol}: (New) ไม่สามารถซื้อได้")
-            return
-
-        # คำนวณเป้าหมาย Take Profit และ Cut Loss
-        target_sell_price = buy_price * (1 + profit_percent / 100) / (1 - trading_fee_rate)
-        cut_loss_price = buy_price * (1 - cut_loss_percent / 100) / (1 - trading_fee_rate)
-        save_log(symbol,f"{symbol}: (New) เป้าหมายขายกำไร {target_sell_price:.2f} THB (รวมค่าธรรมเนียม)")
-        save_log(symbol,f"{symbol}: (New) เป้าหมาย Cut Loss {cut_loss_price:.2f} THB (รวมค่าธรรมเนียม)")
-    
-    
-    
-    # รอขาย
     while True:
-        # save_log(symbol,"-----------------------------------------------------------------------")
-        ticker = get_market_ticker(symbol)
-        if ticker and "last" in ticker:
-            current_price = float(ticker.get("last"))
-            # save_log(symbol,f"{symbol}: ราคาปัจจุบัน {current_price:.2f} THB")
-            # ตรวจสอบยอดคงเหลือ
-            wallet = get_wallet_balance()
-
-            balance = float(wallet.get(symbol.split("_")[0], 0))  # ดึงยอดคงเหลือของเหรียญที่สนใจ
-            balancestr = format(balance, '.10f')
-            # save_log(symbol,f"{symbol}: คงเหลือ {balancestr}")
-            if(balance > 0):
-                sell_fee = balance * target_sell_price * trading_fee_rate
-                net_profit = (balance * target_sell_price) - (balance * buy_price) - buy_fee - sell_fee
-                # save_log(symbol,f"{symbol}: กำไรสุทธิ หาก ขายตรงเป้า({target_sell_price:.2f}): {net_profit:.2f} THB ค่า fee ไปกลับ ")
-                
-                net_loss = (balance * cut_loss_price) - (balance * buy_price) - buy_fee - sell_fee
-                # save_log(symbol,f"{symbol}: ขาดทุนสุทธิหาก ขายตรงเป้า({cut_loss_price:.2f}): {net_loss:.2f} THB ค่า fee ไปกลับ ")
-                
-                # ขายเมื่อถึงเป้าหมาย Take Profit
-                if current_price >= target_sell_price:
-                    save_log(symbol,f"{symbol}: ถึงเป้าหมายกำไร! กำลังขาย...")
-                    sell_response = place_order(symbol, "sell", balance, current_price)
-                    save_log(symbol,f"{symbol}: ผลลัพธ์การขาย: {sell_response}")
-
-                    # คำนวณ Net Profit
-                    sell_fee = balance * current_price * trading_fee_rate
-                    net_profit = (balance * current_price) - (balance * buy_price) - buy_fee - sell_fee
-                    save_log(symbol,f"{symbol}: กำไรสุทธิหลังขาย: {net_profit:.2f} THB")
-                    save_trade_record(symbol, "sell", net_profit)
-                    break
-
-                # ขายเมื่อถึงเป้าหมาย Cut Loss
-                elif current_price <= cut_loss_price:
-                    save_log(symbol,f"{symbol}: ถึงเป้าหมาย Cut Loss! กำลังขาย...")
-                    sell_response = place_order(symbol, "sell", balance, current_price)
-                    save_log(symbol,f"{symbol}: ผลลัพธ์การขาย: {sell_response}")
-
-                    # คำนวณ Net Loss
-                    sell_fee = balance * current_price * trading_fee_rate
-                    net_loss = (balance * current_price) - (balance * buy_price) - buy_fee - sell_fee
-                    save_log(symbol,f"{symbol}: ขาดทุนสุทธิหลังขาย: {net_loss:.2f} THB")
-                    save_trade_record(symbol, "sell", net_loss)
-                    break
-                # save_log(symbol,f"ไม่ซื้อไม่ขาย รอ {timetosleep} วิ โหลดใหม่")
-            else:
-                save_log(symbol,f"{symbol}: สงสัยยังซื้อไม่สำเร็จ")
-
-        time.sleep(timetosleep)  # ตรวจสอบราคาใหม่ทุก 10 วินาที
+        await monitor_market(symbol, balance, target_sell_price, cut_loss_price, trading_fee_rate, timetosleep)
 
 
+async def handle_new_order(symbol, budget, trading_fee_rate, profit_percent, cut_loss_percent, timetosleep):
+    """จัดการคำสั่งซื้อใหม่"""
+    cancel_all_orders(symbol)
+    ticker = get_market_ticker(symbol)
+    if not ticker or "last" not in ticker:
+        save_log(symbol, f"{symbol}: ไม่สามารถดึงราคาล่าสุดได้")
+        return
 
-def run_parallel(symbols, budget=50, profit_percent=1.5, cut_loss_percent=3, trading_fee_percent=0.25):
-    """รัน Scalping Bot แบบ Parallel"""
-    timetosleep = 5
-    reloadtime = 30
-    while True:
-        with ThreadPoolExecutor(max_workers=len(symbols)) as executor:
-            futures = [
-                executor.submit(scalping_bot, symbol, budget, profit_percent, cut_loss_percent, trading_fee_percent , timetosleep , reloadtime)
-                for symbol in symbols
-            ]
-            for future in futures:
-                future.result()  # รอให้แต่ละ Task เสร็จสิ้น
+    current_price = float(ticker["last"])
+    amount_to_buy = budget / current_price
+    place_order(symbol, "buy", amount_to_buy, current_price)
 
-        save_log("",f"รอบเสร็จสิ้น รอ {reloadtime} นาทีเพื่อเริ่มรอบใหม่...")
-        time.sleep(reloadtime)  # รอ 1 นาทีเพื่อเริ่มรอบใหม่
+    target_sell_price = calculate_target_price(current_price, profit_percent, trading_fee_rate)
+    cut_loss_price = calculate_cut_loss_price(current_price, cut_loss_percent, trading_fee_rate)
 
-def run(symbols, budget=50, profit_percent=1.5, cut_loss_percent=3, trading_fee_percent=0.25):
-    """รัน Scalping Bot แบบ Parallel"""
-    timetosleep = 5
-    reloadtime = 30
-    while True:
-        save_log("","เริ่มรอบใหม่...")
-        for symbol in symbols:
-            scalping_bot(symbol, budget, profit_percent, cut_loss_percent, trading_fee_percent , timetosleep)
+    save_log(symbol, f"{symbol}: ตั้งเป้าหมายขายกำไรที่ {target_sell_price:.2f} และ Cut Loss ที่ {cut_loss_price:.2f}")
 
-        save_log("",f"รอบเสร็จสิ้น รอ {reloadtime} นาทีเพื่อเริ่มรอบใหม่...")
-        time.sleep(reloadtime)  # รอ 1 นาทีเพื่อเริ่มรอบใหม่
 
+def calculate_target_price(buy_price, profit_percent, trading_fee_rate):
+    """คำนวณเป้าหมายราคาขายทำกำไร"""
+    return buy_price * (1 + profit_percent / 100) / (1 - trading_fee_rate)
+
+
+def calculate_cut_loss_price(buy_price, cut_loss_percent, trading_fee_rate):
+    """คำนวณเป้าหมายราคาขายขาดทุน"""
+    return buy_price * (1 - cut_loss_percent / 100) / (1 - trading_fee_rate)
+
+def calculate_profit(balance, sell_price, buy_price, buy_fee, trading_fee_rate):
+    """
+    คำนวณกำไรสุทธิหลังการขาย
+    :param balance: จำนวนสินทรัพย์ที่ขาย
+    :param sell_price: ราคาขายต่อหน่วย
+    :param buy_price: ราคาซื้อต่อหน่วย
+    :param buy_fee: ค่าธรรมเนียมที่จ่ายตอนซื้อ
+    :param trading_fee_rate: อัตราค่าธรรมเนียมการซื้อขาย
+    :return: กำไรสุทธิ (THB)
+    """
+    sell_fee = balance * sell_price * trading_fee_rate
+    net_profit = (balance * sell_price) - (balance * buy_price) - buy_fee - sell_fee
+    return net_profit
+
+async def monitor_market(symbol, balance, target_sell_price, cut_loss_price, trading_fee_rate, timetosleep):
+    """ติดตามตลาดและดำเนินการขายเมื่อถึงเป้าหมาย"""
+    ticker = get_market_ticker(symbol)
+    if not ticker or "last" not in ticker:
+        return
+
+    current_price = float(ticker["last"])
+    if current_price >= target_sell_price:
+        execute_sell(symbol, balance, current_price, "profit", trading_fee_rate)
+    elif current_price <= cut_loss_price:
+        execute_sell(symbol, balance, current_price, "cut_loss", trading_fee_rate)
+    else:
+        await asyncio.sleep(timetosleep)
+
+def execute_sell(symbol, balance, sell_price, reason, trading_fee_rate):
+    """
+    ดำเนินการขายและบันทึกผลลัพธ์
+    :param symbol: ชื่อของสินทรัพย์
+    :param balance: จำนวนสินทรัพย์ที่ขาย
+    :param sell_price: ราคาขายต่อหน่วย
+    :param reason: เหตุผลในการขาย (profit หรือ cut_loss)
+    :param trading_fee_rate: อัตราค่าธรรมเนียมการซื้อขาย
+    """
+    response = place_order(symbol, "sell", balance, sell_price)
+    if response:
+        # ดึงข้อมูลราคาซื้อและค่าธรรมเนียมจากคำสั่งซื้อก่อนหน้า
+        latest_buy = get_latest_buy_order(symbol)
+        buy_price = latest_buy.get("buy_price", 0)
+        buy_fee = latest_buy.get("fee", 0)
+
+        # คำนวณกำไรสุทธิ
+        net_profit = calculate_profit(balance, sell_price, buy_price, buy_fee, trading_fee_rate)
+
+        # บันทึกกำไรและแสดงข้อความ
+        save_trade_record(symbol, "sell", net_profit)
+        save_log(symbol, f"{symbol}: ขายสำเร็จด้วยเหตุผล {reason} กำไรสุทธิ {net_profit:.2f} THB")
+        
+        
 def cancel_all_orders_my():
     """ยกเลิกคำสั่งซื้อขายทั้งหมดที่ยังค้าง"""
     open_orders = get_open_orders()
@@ -583,6 +542,50 @@ def cancel_all_orders_my():
 
 
     print("All orders processed.")
+    
+async def scalping_bot_async(symbol, budget=50, profit_percent=1.5, cut_loss_percent=3, trading_fee_percent=0.25, timetosleep=10, reloadtime=120):
+    """บอท Scalping แบบ Async พร้อม Take Profit และ Cut Loss"""
+    # ดัดแปลง `scalping_bot` ให้ทำงานแบบ async
+    trading_fee_rate = trading_fee_percent / 100  # แปลงค่าธรรมเนียมเป็นอัตราส่วน
+
+    # ตรวจสอบยอดคงเหลือ
+    wallet = get_wallet_balance()
+    balance = float(wallet.get(symbol.split("_")[0], 0))
+
+    if balance > 0:
+        await handle_existing_balance(symbol, balance, profit_percent, cut_loss_percent, trading_fee_rate, timetosleep)
+    else:
+        await handle_new_order(symbol, budget, trading_fee_rate, profit_percent, cut_loss_percent, timetosleep)
+
+    save_log(symbol, f"{symbol}: Scalping bot running asynchronously.")
+    # เพิ่มการเรียก API หรือการทำงานจริงที่ต้องการ
+    
+async def run_parallel_async(symbols, budget=50, profit_percent=1.5, cut_loss_percent=3, trading_fee_percent=0.25):
+    """รัน Scalping Bot แบบ Async"""
+    timetosleep = 5
+    reloadtime = 30
+    while True:
+        tasks = [
+            scalping_bot_async(symbol, budget, profit_percent, cut_loss_percent, trading_fee_percent, timetosleep, reloadtime)
+            for symbol in symbols
+        ]
+        # เรียกใช้ tasks แบบ async โดยไม่ต้องรอ
+        await asyncio.gather(*tasks)
+        save_log("", f"รอบเสร็จสิ้น รอ {reloadtime} นาทีเพื่อเริ่มรอบใหม่...")
+        await asyncio.sleep(reloadtime * 60)  # รอ reloadtime เป็นนาที
+
+def run(symbols, budget=50, profit_percent=1.5, cut_loss_percent=3, trading_fee_percent=0.25):
+    """รัน Scalping Bot แบบ Parallel"""
+    timetosleep = 5
+    reloadtime = 30
+    while True:
+        save_log("","เริ่มรอบใหม่...")
+        for symbol in symbols:
+            scalping_bot(symbol, budget, profit_percent, cut_loss_percent, trading_fee_percent , timetosleep)
+
+        save_log("",f"รอบเสร็จสิ้น รอ {reloadtime} นาทีเพื่อเริ่มรอบใหม่...")
+        time.sleep(reloadtime)  # รอ 1 นาทีเพื่อเริ่มรอบใหม่
+
 
 if __name__ == "__main__":
     if "--cancel-all" in sys.argv:
@@ -590,4 +593,4 @@ if __name__ == "__main__":
     symbols_to_trade = ["BTC_THB", "ETH_THB", "XRP_THB", "ADA_THB"]  # สกุลเงินที่ต้องการเทรด
     # symbols_to_trade = ["BTC_THB"]  # สกุลเงินที่ต้องการเทรด
     initialize_database()
-    run_parallel(symbols_to_trade)
+    asyncio.run(run_parallel_async(symbols_to_trade))
