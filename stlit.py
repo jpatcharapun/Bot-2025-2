@@ -430,7 +430,7 @@ def calculate_overall_profit_loss():
     conn.close()
     return result[0] if result and result[0] is not None else 0.0
 
-def scalping_bot(symbol, budget=100, profit_percent=2, cut_loss_percent=3, trading_fee_percent=0.25 , timetosleep=10 , reloadtime=120):
+def scalping_bot(symbol, budget=100, profit_percent=2, cut_loss_percent=3, trading_fee_percent=0.25 , timetosleep=10 , reloadtime=120, max_iterations=12):
     """บอท Scalping พร้อม Take Profit และ Cut Loss"""
     trading_fee_rate = trading_fee_percent / 100  # แปลงค่าธรรมเนียมเป็นอัตราส่วน
     
@@ -495,11 +495,9 @@ def scalping_bot(symbol, budget=100, profit_percent=2, cut_loss_percent=3, tradi
         save_log(symbol,f"{symbol}: (New) เป้าหมายขายกำไร {target_sell_price:.2f} THB (รวมค่าธรรมเนียม)")
         save_log(symbol,f"{symbol}: (New) เป้าหมาย Cut Loss {cut_loss_price:.2f} THB (รวมค่าธรรมเนียม)")
     
-    
-    
     # รอขาย
-    while True:
-        # save_log(symbol,"-----------------------------------------------------------------------")
+    for _ in range(max_iterations):
+        # save_log(symbol,f"Check Price ({symbol})")
         ticker = get_market_ticker(symbol)
         if ticker and "last" in ticker:
             current_price = float(ticker.get("last"))
@@ -511,11 +509,11 @@ def scalping_bot(symbol, budget=100, profit_percent=2, cut_loss_percent=3, tradi
             balancestr = format(balance, '.10f')
             # save_log(symbol,f"{symbol}: คงเหลือ {balancestr}")
             if(balance > 0):
-                sell_fee = balance * target_sell_price * trading_fee_rate
-                net_profit = (balance * target_sell_price) - (balance * buy_price) - buy_fee - sell_fee
+                # sell_fee = balance * target_sell_price * trading_fee_rate
+                # net_profit = (balance * target_sell_price) - (balance * buy_price) - buy_fee - sell_fee
                 # save_log(symbol,f"{symbol}: กำไรสุทธิ หาก ขายตรงเป้า({target_sell_price:.2f}): {net_profit:.2f} THB ค่า fee ไปกลับ ")
                 
-                net_loss = (balance * cut_loss_price) - (balance * buy_price) - buy_fee - sell_fee
+                # net_loss = (balance * cut_loss_price) - (balance * buy_price) - buy_fee - sell_fee
                 # save_log(symbol,f"{symbol}: ขาดทุนสุทธิหาก ขายตรงเป้า({cut_loss_price:.2f}): {net_loss:.2f} THB ค่า fee ไปกลับ ")
                 
                 # ขายเมื่อถึงเป้าหมาย Take Profit
@@ -573,20 +571,27 @@ def run_parallel(symbols, budget=50, profit_percent=1.5, cut_loss_percent=3, tra
     
 async def run_parallel_async(symbols, budget=50, profit_percent=1.5, cut_loss_percent=3, trading_fee_percent=0.25):
     timetosleep = 5
-    reloadtime = 30
+    reloadtime = 60  # In seconds for testing; adjust as needed
     while not stop_flag.is_set():
+        if stop_flag.is_set():
+            save_log("", "Bot stopped.")
+            break
         tasks = [
-            asyncio.to_thread(scalping_bot, symbol, budget, profit_percent, cut_loss_percent, trading_fee_percent, timetosleep, reloadtime)
+            asyncio.to_thread(scalping_bot, symbol, budget, profit_percent, cut_loss_percent, trading_fee_percent, timetosleep, reloadtime , max_iterations=5)
             for symbol in symbols
         ]
+        
+        # Run all tasks concurrently
         await asyncio.gather(*tasks)
-        if stop_flag.is_set():
-            break
 
-        save_log("", f"รอบเสร็จสิ้น รอ {reloadtime} นาทีเพื่อเริ่มรอบใหม่...")
+        # Log after the completion of one round of tasks
+        save_log("", f"รอบเสร็จสิ้น รอ {reloadtime} วินาทีเพื่อเริ่มรอบใหม่...")
+        
+        # Wait for the reload time before starting the next round
         await asyncio.sleep(reloadtime)
-    save_log("", "Bot stopped.")
 
+    save_log("", "Bot stopped.")
+    
 def run(symbols, budget=50, profit_percent=1.5, cut_loss_percent=3, trading_fee_percent=0.25):
     """รัน Scalping Bot แบบ Parallel"""
     timetosleep = 5
@@ -712,8 +717,8 @@ def start_bot_async():
 # ฟังก์ชันหยุดบอท
 def stop_bot():
     if st.session_state.bot_process and st.session_state.bot_status == "Running":
-        # st.session_state.bot_process.terminate()
-        # st.session_state.bot_process.wait()
+        st.session_state.bot_process.terminate()
+        st.session_state.bot_process.wait()
         stop_flag.set()
         st.session_state.bot_status = "Stopped"
         st.session_state.bot_process = None
@@ -1127,9 +1132,9 @@ def restart_bot_if_running():
 async def auto_refresh():
     while refresh_auto:
         autorefresh()
-        await asyncio.sleep(300)  # รอ 60 วินาทีต่อการ Refresh
-        if st.session_state.bot_status == "Running":
-            restart_bot()
+        # await asyncio.sleep(300)  # รอ 60 วินาทีต่อการ Refresh
+        # if st.session_state.bot_status == "Running":
+        #     restart_bot()
             
 # เรียกใช้งาน Auto Refresh แบบ Async
 if refresh_auto:
