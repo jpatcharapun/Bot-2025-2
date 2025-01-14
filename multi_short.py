@@ -1,5 +1,4 @@
 import sys
-import numpy as np
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import hmac
